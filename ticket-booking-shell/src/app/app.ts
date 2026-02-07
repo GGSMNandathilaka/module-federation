@@ -1,4 +1,13 @@
-import { Component, signal, computed } from '@angular/core';
+import {
+  AfterViewInit,
+  Component,
+  computed,
+  effect,
+  signal,
+  ViewChild,
+  ViewContainerRef,
+} from '@angular/core';
+import { loadRemoteModule } from '@angular-architects/native-federation';
 import { RouterOutlet } from '@angular/router';
 
 interface Movie {
@@ -21,46 +30,16 @@ interface CartItem {
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
-export class App {
-  protected readonly title = signal('Movie Ticket Booking');
+export class App implements AfterViewInit {
+  @ViewChild('movieCatalogHost', { read: ViewContainerRef })
+  movieCatalogHost!: ViewContainerRef;
 
-  protected readonly movies = signal<Movie[]>([
-    {
-      id: '1',
-      name: 'Dune: Part Two',
-      thumbnail: 'https://picsum.photos/seed/movie1/400/225',
-      releaseDate: '2024-03-01',
-      ticketPrice: 12.99,
-    },
-    {
-      id: '2',
-      name: 'Oppenheimer',
-      thumbnail: 'https://picsum.photos/seed/movie2/400/225',
-      releaseDate: '2023-07-21',
-      ticketPrice: 14.99,
-    },
-    {
-      id: '3',
-      name: 'The Batman',
-      thumbnail: 'https://picsum.photos/seed/movie3/400/225',
-      releaseDate: '2022-03-04',
-      ticketPrice: 11.99,
-    },
-    {
-      id: '4',
-      name: 'Spider-Man: No Way Home',
-      thumbnail: 'https://picsum.photos/seed/movie4/400/225',
-      releaseDate: '2021-12-17',
-      ticketPrice: 13.99,
-    },
-    {
-      id: '5',
-      name: 'Top Gun: Maverick',
-      thumbnail: 'https://picsum.photos/seed/movie5/400/225',
-      releaseDate: '2022-05-27',
-      ticketPrice: 12.49,
-    },
-  ]);
+  @ViewChild('shoppingCartHost', { read: ViewContainerRef })
+  shoppingCartHost!: ViewContainerRef;
+
+  protected readonly title = signal('Movie Ticket Booking');
+  protected readonly movieCatalogError = signal<string | null>(null);
+  protected readonly shoppingCartError = signal<string | null>(null);
 
   protected readonly cart = signal<CartItem[]>([]);
 
@@ -76,6 +55,22 @@ export class App {
     return this.subtotal() + this.taxAmount();
   });
 
+  private shoppingCartRef: { setInput: (name: string, value: unknown) => void; changeDetectorRef: { detectChanges: () => void } } | null = null;
+
+  constructor() {
+    effect(() => {
+      const cart = this.cart();
+      const ref = this.shoppingCartRef;
+      if (ref) {
+        ref.setInput('cart', cart);
+        ref.setInput('subtotal', this.subtotal());
+        ref.setInput('taxAmount', this.taxAmount());
+        ref.setInput('totalCost', this.totalCost());
+        ref.changeDetectorRef.detectChanges();
+      }
+    });
+  }
+
   addToCart(movie: Movie): void {
     const currentCart = this.cart();
     const existing = currentCart.find((item) => item.movie.id === movie.id);
@@ -85,21 +80,17 @@ export class App {
         currentCart.map((item) =>
           item.movie.id === movie.id
             ? {
-              ...item,
-              quantity: item.quantity + 1,
-              total: (item.quantity + 1) * movie.ticketPrice,
-            }
+                ...item,
+                quantity: item.quantity + 1,
+                total: (item.quantity + 1) * movie.ticketPrice,
+              }
             : item
         )
       );
     } else {
       this.cart.set([
         ...currentCart,
-        {
-          movie,
-          quantity: 1,
-          total: movie.ticketPrice,
-        },
+        { movie, quantity: 1, total: movie.ticketPrice },
       ]);
     }
   }
@@ -125,18 +116,50 @@ export class App {
     );
   }
 
-  formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
+  async ngAfterViewInit(): Promise<void> {
+    await this.loadMovieCatalog();
+    await this.loadShoppingCart();
   }
 
-  formatCurrency(amount: number): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'CAD',
-    }).format(amount);
+  private async loadMovieCatalog(): Promise<void> {
+    try {
+      this.movieCatalogError.set(null);
+      const m = await loadRemoteModule('movie-catelog', './MovieList');
+      const MovieListComponent = m.MovieListComponent;
+      if (this.movieCatalogHost && MovieListComponent) {
+        this.movieCatalogHost.clear();
+        const ref = this.movieCatalogHost.createComponent(MovieListComponent);
+        ref.setInput('addToCart', this.addToCart.bind(this));
+        ref.changeDetectorRef.detectChanges();
+      }
+    } catch (err) {
+      console.error('Failed to load movie-catelog:', err);
+      this.movieCatalogError.set('Movie catalog failed to load. Start the remote: cd movie-catelog && ng serve');
+      this.movieCatalogHost?.clear();
+    }
+  }
+
+  private async loadShoppingCart(): Promise<void> {
+    try {
+      this.shoppingCartError.set(null);
+      const m = await loadRemoteModule('shopping-cart', './ShoppingCart');
+      const ShoppingCartComponent = m.ShoppingCartComponent;
+      if (this.shoppingCartHost && ShoppingCartComponent) {
+        this.shoppingCartHost.clear();
+        const ref = this.shoppingCartHost.createComponent(ShoppingCartComponent);
+        this.shoppingCartRef = ref;
+        ref.setInput('cart', this.cart());
+        ref.setInput('subtotal', this.subtotal());
+        ref.setInput('taxAmount', this.taxAmount());
+        ref.setInput('totalCost', this.totalCost());
+        ref.setInput('removeFromCart', this.removeFromCart.bind(this));
+        ref.setInput('updateQuantity', this.updateQuantity.bind(this));
+        ref.changeDetectorRef.detectChanges();
+      }
+    } catch (err) {
+      console.error('Failed to load shopping-cart:', err);
+      this.shoppingCartError.set('Shopping cart failed to load. Start the remote: cd shopping-cart && ng serve');
+      this.shoppingCartHost?.clear();
+    }
   }
 }

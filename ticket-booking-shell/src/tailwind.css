@@ -1,1 +1,5 @@
 @import "tailwindcss";
+
+/* Include remote micro-frontends so their Tailwind classes are generated in the shell bundle */
+@source "../../movie-catelog/src";
+@source "../../shopping-cart/src";

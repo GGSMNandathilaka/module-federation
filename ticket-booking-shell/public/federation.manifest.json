@@ -1,0 +1,4 @@
+{
+	"movie-catelog": "http://localhost:4201/remoteEntry.json",
+	"shopping-cart": "http://localhost:4202/remoteEntry.json"
+}
